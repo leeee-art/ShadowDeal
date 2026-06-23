@@ -1,5 +1,5 @@
 # ========================================
-# SHADOW DEAL - Лучшая цена
+# SHADOW DEAL - ЯНДЕКС.МАРКЕТ
 # ========================================
 import requests
 import json
@@ -52,7 +52,7 @@ def index():
         <div class="container">
             <div class="header">
                 <h1>🟣 Shadow Deal</h1>
-                <p>Лучшая цена на Wildberries, Ozon, AliExpress</p>
+                <p>Лучшая цена на Яндекс.Маркет</p>
             </div>
             <div class="search-card">
                 <div class="search-row">
@@ -84,11 +84,6 @@ def index():
                             <span class="price-now">${d.price.toLocaleString()} ₽</span>
                             ${d.old_price ? `<span class="price-old">${d.old_price.toLocaleString()} ₽</span><span class="discount">-${d.discount}%</span>` : ''}
                         </div>
-                        <div class="stats">
-                            <div class="stat"><div class="val">⭐ ${d.rating}</div><div class="lbl">Рейтинг</div></div>
-                            <div class="stat"><div class="val">💬 ${d.reviews}</div><div class="lbl">Отзывов</div></div>
-                            <div class="stat"><div class="val">${d.marketplace}</div><div class="lbl">Площадка</div></div>
-                        </div>
                         <a href="${d.url}" target="_blank" class="buy-btn">Перейти к товару →</a>
                     `;
                 })
@@ -107,109 +102,75 @@ def best_price():
     if not query:
         return jsonify({'error': 'Введите запрос'})
     
-    products = []
-    
-    # Wildberries
+    # Парсим Яндекс.Маркет
     try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml',
+        }
+        
+        # Поиск на Яндекс.Маркете
         r = requests.get(
-            'https://search.wb.ru/exactmatch/ru/common/v4/search',
-            params={'query': query, 'resultset': 'catalog', 'limit': 5},
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
-            timeout=10
+            f'https://market.yandex.ru/search?text={query}&cvredirect=0',
+            headers=headers,
+            timeout=15
         )
+        
         if r.status_code == 200:
-            for item in r.json().get('data', {}).get('products', []):
-                price = int(item.get('salePriceU', 0) / 100)
-                old = int(item.get('priceU', 0) / 100)
-                if price > 0:
-                    products.append({
-                        'title': item.get('name', ''),
-                        'price': price,
-                        'old_price': old if old > price else None,
-                        'rating': item.get('rating', 0),
-                        'reviews': item.get('feedbacks', 0),
-                        'image': f"https://images.wbstatic.net/c516x688/new/{item.get('id')}0000/1.jpg",
-                        'url': f"https://www.wildberries.ru/catalog/{item.get('id')}/detail.aspx",
-                        'marketplace': 'Wildberries'
-                    })
-    except: pass
+            html = r.text
+            
+            # Ищем данные в HTML
+            import re
+            
+            # Ищем JSON с товарами
+            products_data = re.findall(r'"products":\s*(\[.*?\])', html, re.DOTALL)
+            
+            if products_data:
+                try:
+                    products = json.loads(products_data[0])
+                    
+                    if products:
+                        # Берём первый товар
+                        best = products[0]
+                        
+                        price = int(best.get('price', {}).get('value', 0))
+                        old_price = int(best.get('price', {}).get('oldValue', 0))
+                        
+                        return jsonify({
+                            'title': best.get('title', 'Без названия'),
+                            'price': price,
+                            'old_price': old_price if old_price > price else None,
+                            'discount': round((1 - price / old_price) * 100) if old_price > price else 0,
+                            'rating': float(best.get('rating', 0)),
+                            'reviews': int(best.get('reviewCount', 0)),
+                            'image': best.get('pictures', [{}])[0].get('url', '') if best.get('pictures') else '',
+                            'url': f"https://market.yandex.ru{best.get('url', '')}",
+                            'marketplace': 'Яндекс.Маркет'
+                        })
+                except:
+                    pass
+            
+            # Если JSON не нашли - ищем обычные данные
+            titles = re.findall(r'<h3[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</h3>', html, re.DOTALL)
+            prices = re.findall(r'<span[^>]*class="[^"]*price[^"]*"[^>]*>(.*?)</span>', html, re.DOTALL)
+            
+            if titles and prices:
+                return jsonify({
+                    'title': re.sub(r'<.*?>', '', titles[0]).strip()[:100],
+                    'price': int(re.sub(r'\D', '', prices[0])),
+                    'old_price': None,
+                    'discount': 0,
+                    'rating': 0,
+                    'reviews': 0,
+                    'image': '',
+                    'url': f'https://market.yandex.ru/search?text={query}',
+                    'marketplace': 'Яндекс.Маркет'
+                })
+                
+    except Exception as e:
+        return jsonify({'error': f'Ошибка: {str(e)[:100]}'})
     
-    # Ozon
-    try:
-        r = requests.post(
-            'https://www.ozon.ru/api/composer-api.bx/page/json/v2',
-            json={"url": f"/search/?text={query}", "layout_container": "categorySearchMegapagination", "layout_page_index": 1, "page": 1},
-            headers={'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'},
-            timeout=10
-        )
-        if r.status_code == 200:
-            widget = r.json().get('widgetStates', {})
-            for key, val in widget.items():
-                if 'searchResults' in key:
-                    items = (json.loads(val) if isinstance(val, str) else val).get('items', [])
-                    for item in items[:5]:
-                        try:
-                            main = item.get('mainState', [{}])[0]
-                            price_atom = main.get('atom', {}).get('price', {})
-                            price = int(price_atom.get('price', 0))
-                            old = int(price_atom.get('originalPrice', 0))
-                            if price > 0:
-                                products.append({
-                                    'title': item.get('title', ''),
-                                    'price': price,
-                                    'old_price': old if old > price else None,
-                                    'rating': item.get('rating', {}).get('value', 0),
-                                    'reviews': item.get('feedbacksCount', 0),
-                                    'image': item.get('previewImage', ''),
-                                    'url': f"https://www.ozon.ru{main.get('link', '')}",
-                                    'marketplace': 'Ozon'
-                                })
-                        except: pass
-                    break
-    except: pass
-    
-    # AliExpress
-    try:
-        r = requests.get(
-            'https://gpsfront.aliexpress.com/getRecommendingResults.do',
-            params={'query': query, 'widget_id': '5547572', 'limit': 5},
-            headers={'User-Agent': 'Mozilla/5.0'},
-            timeout=10
-        )
-        if r.status_code == 200:
-            for item in r.json().get('results', [])[:5]:
-                price = float(item.get('price', 0))
-                old_price = float(item.get('original_price', 0)) or None
-                if price > 0:
-                    products.append({
-                        'title': item.get('title', ''),
-                        'price': price,
-                        'old_price': old_price if old_price and old_price > price else None,
-                        'rating': float(item.get('rating', 0)),
-                        'reviews': item.get('orders', 0),
-                        'image': f"https:{item.get('image')}",
-                        'url': f"https:{item.get('detail_url')}",
-                        'marketplace': 'AliExpress'
-                    })
-    except: pass
-    
-    if not products:
-        return jsonify({'error': 'Ничего не найдено'})
-    
-    valid = [p for p in products if p['price'] > 0]
-    if not valid:
-        return jsonify({'error': 'Нет цен'})
-    
-    valid.sort(key=lambda x: (x['price'], -x['rating']))
-    best = valid[0]
-    
-    if best['old_price'] and best['old_price'] > best['price']:
-        best['discount'] = round((1 - best['price'] / best['old_price']) * 100)
-    else:
-        best['discount'] = 0
-        best['old_price'] = None
-    
-    return jsonify(best)
+    return jsonify({'error': 'Ничего не найдено'})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
